@@ -7,11 +7,8 @@ import joblib
 import time
 import os
 from PIL import Image
-import threading
-import queue
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.feature_selection import SelectKBest, f_classif
@@ -62,7 +59,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Title and header
-st.markdown('<div class="main-header"><h1>🤟 Advanced Hand Gesture Recognition</h1><p>Real-time AI-powered gesture detection with MediaPipe & Machine Learning</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header"><h1>🤟 Hand Gesture Recognition</h1><p>AI-powered gesture detection with MediaPipe & Machine Learning</p></div>', unsafe_allow_html=True)
+
+# Deployment notice
+st.info("📱 **Streamlit Cloud Deployment**: Live camera is not available in cloud deployment. Use the image upload feature for gesture recognition!")
 
 # Initialize session state
 if 'camera_active' not in st.session_state:
@@ -75,38 +75,54 @@ if 'model' not in st.session_state:
 # MediaPipe setup
 @st.cache_resource
 def setup_mediapipe():
-    mp_hands = mp.solutions.hands
-    mp_drawing = mp.solutions.drawing_utils
-    hands = mp_hands.Hands(
-        static_image_mode=False,
-        max_num_hands=1,
-        min_detection_confidence=0.7,
-        min_tracking_confidence=0.6,
-        model_complexity=0
-    )
-    return mp_hands, mp_drawing, hands
+    try:
+        mp_hands = mp.solutions.hands
+        mp_drawing = mp.solutions.drawing_utils
+        hands = mp_hands.Hands(
+            static_image_mode=False,
+            max_num_hands=1,
+            min_detection_confidence=0.7,
+            min_tracking_confidence=0.6,
+            model_complexity=0
+        )
+        return mp_hands, mp_drawing, hands
+    except Exception as e:
+        st.error(f"Error setting up MediaPipe: {e}")
+        return None, None, None
 
-mp_hands, mp_drawing, hands = setup_mediapipe()
+try:
+    mp_hands, mp_drawing, hands = setup_mediapipe()
+    if mp_hands is None:
+        st.error("Failed to initialize MediaPipe. Please refresh the page.")
+        st.stop()
+except Exception as e:
+    st.error(f"MediaPipe initialization failed: {e}")
+    st.stop()
 
 # Model functions
+@st.cache_data
 def create_sample_data():
     """Create sample gesture data for demonstration"""
-    np.random.seed(42)
-    gestures = ["thumbs_up", "peace", "open_palm", "fist", "ok_sign"]
-    data = []
-    labels = []
-    
-    for gesture in gestures:
-        for _ in range(50):  # 50 samples per gesture
-            # Generate realistic hand landmark data (21 landmarks × 3 coordinates = 63 features)
-            landmarks = np.random.random(63) * 0.8 + 0.1  # Values between 0.1 and 0.9
-            data.append(landmarks)
-            labels.append(gesture)
-    
-    df = pd.DataFrame(data)
-    df['label'] = labels
-    df.to_csv('gesture_data.csv', index=False)
-    return True
+    try:
+        np.random.seed(42)
+        gestures = ["thumbs_up", "peace", "open_palm", "fist", "ok_sign"]
+        data = []
+        labels = []
+        
+        for gesture in gestures:
+            for _ in range(50):  # 50 samples per gesture
+                # Generate realistic hand landmark data (21 landmarks × 3 coordinates = 63 features)
+                landmarks = np.random.random(63) * 0.8 + 0.1  # Values between 0.1 and 0.9
+                data.append(landmarks)
+                labels.append(gesture)
+        
+        df = pd.DataFrame(data)
+        df['label'] = labels
+        df.to_csv('gesture_data.csv', index=False)
+        return True
+    except Exception as e:
+        st.error(f"Error creating sample data: {e}")
+        return False
 
 def train_gesture_model():
     """Train a gesture recognition model"""
@@ -168,67 +184,64 @@ def extract_landmarks(hand_landmarks):
 def test_camera():
     """Test camera access and return status"""
     try:
-        # Try different camera indices
-        for camera_index in [0, 1, 2, -1]:
-            try:
-                cap = cv2.VideoCapture(camera_index)
-                if cap.isOpened():
-                    ret, frame = cap.read()
-                    if ret and frame is not None:
-                        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        cap.release()
-                        return {
-                            'success': True, 
-                            'index': camera_index,
-                            'width': width,
-                            'height': height
-                        }
-                    cap.release()
-                else:
-                    if cap:
-                        cap.release()
-            except Exception as e:
-                if 'cap' in locals() and cap:
-                    cap.release()
-                continue
-        
-        return {'success': False, 'error': 'No working camera found'}
+        # Simplified camera test for deployment
+        cap = cv2.VideoCapture(0)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                cap.release()
+                return {
+                    'success': True, 
+                    'index': 0,
+                    'width': width,
+                    'height': height
+                }
+            cap.release()
+        return {'success': False, 'error': 'Camera not accessible in deployment environment'}
     except Exception as e:
         return {'success': False, 'error': str(e)}
 
 def process_frame(frame, model):
     """Process a single frame for gesture recognition"""
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    results = hands.process(frame_rgb)
-    
-    gesture_label = "No hand detected"
-    confidence = 0.0
-    
-    if results.multi_hand_landmarks:
-        for hand_landmarks in results.multi_hand_landmarks:
-            # Draw landmarks
-            mp_drawing.draw_landmarks(
-                frame, hand_landmarks, mp_hands.HAND_CONNECTIONS,
-                mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
-                mp_drawing.DrawingSpec(color=(255, 0, 0), thickness=2)
-            )
+    try:
+        if hands is None:
+            return frame, "MediaPipe not initialized", 0.0
             
-            # Extract features
-            features = extract_landmarks(hand_landmarks)
-            
-            if features.shape[1] == 63:  # Ensure correct number of features
-                try:
-                    prediction = model.predict(features)[0]
-                    if hasattr(model, 'predict_proba'):
-                        confidence = np.max(model.predict_proba(features))
-                        gesture_label = f"{prediction} ({int(confidence*100)}%)"
-                    else:
-                        gesture_label = str(prediction)
-                except Exception as e:
-                    gesture_label = f"Prediction error: {str(e)[:20]}"
-    
-    return frame, gesture_label, confidence
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = hands.process(frame_rgb)
+        
+        gesture_label = "No hand detected"
+        confidence = 0.0
+        
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
+                # Draw landmarks
+                if mp_drawing and mp_hands:
+                    mp_drawing.draw_landmarks(
+                        frame, hand_landmarks, mp_hands.HAND_CONNECTIONS,
+                        mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
+                        mp_drawing.DrawingSpec(color=(255, 0, 0), thickness=2)
+                    )
+                
+                # Extract features
+                features = extract_landmarks(hand_landmarks)
+                
+                if features.shape[1] == 63:  # Ensure correct number of features
+                    try:
+                        prediction = model.predict(features)[0]
+                        if hasattr(model, 'predict_proba'):
+                            confidence = np.max(model.predict_proba(features))
+                            gesture_label = f"{prediction} ({int(confidence*100)}%)"
+                        else:
+                            gesture_label = str(prediction)
+                    except Exception as e:
+                        gesture_label = f"Prediction error"
+        
+        return frame, gesture_label, confidence
+    except Exception as e:
+        return frame, f"Processing error", 0.0
 
 # Sidebar
 with st.sidebar:
@@ -335,190 +348,98 @@ if start_camera and st.session_state.model_loaded:
 if stop_camera:
     st.session_state.camera_active = False
 
-# Main camera loop
+# Main camera loop - Simplified for deployment
 if st.session_state.camera_active and st.session_state.model_loaded:
-    try:
-        # Try different camera indices and methods
-        cap = None
-        camera_found = False
-        
-        # Try multiple camera indices
-        for camera_index in [0, 1, 2, -1]:
-            try:
-                cap = cv2.VideoCapture(camera_index)
-                if cap.isOpened():
-                    # Test if we can actually read a frame
-                    ret, test_frame = cap.read()
-                    if ret and test_frame is not None:
-                        camera_found = True
-                        st.success(f"✅ Camera found at index {camera_index}")
-                        break
-                    else:
-                        cap.release()
-                else:
-                    if cap:
-                        cap.release()
-            except Exception as e:
-                if cap:
-                    cap.release()
-                continue
-        
-        # If no camera found, try different backends
-        if not camera_found:
-            st.warning("🔍 Trying alternative camera access methods...")
-            backends = [cv2.CAP_V4L2, cv2.CAP_GSTREAMER, cv2.CAP_FFMPEG]
+    st.warning("� **Note**: Live camera is not available in Streamlit Cloud deployment.")
+    st.info("💡 **Solution**: Use the image upload feature below for gesture recognition!")
+    st.session_state.camera_active = False
+    
+    # Always show image upload alternative
+    st.subheader("📸 Upload Image for Gesture Recognition")
+    uploaded_file = st.file_uploader("Choose an image with hand gesture", type=['jpg', 'jpeg', 'png'])
+    
+    if uploaded_file is not None:
+        try:
+            # Read the image
+            image = Image.open(uploaded_file)
+            image_np = np.array(image)
             
-            for backend in backends:
-                try:
-                    cap = cv2.VideoCapture(0, backend)
-                    if cap.isOpened():
-                        ret, test_frame = cap.read()
-                        if ret and test_frame is not None:
-                            camera_found = True
-                            st.success(f"✅ Camera found with backend {backend}")
-                            break
-                        else:
-                            cap.release()
-                    else:
-                        if cap:
-                            cap.release()
-                except Exception as e:
-                    if cap:
-                        cap.release()
-                    continue
-        
-        if not camera_found or cap is None or not cap.isOpened():
-            st.error("❌ Cannot access camera. This might be due to:")
-            st.markdown("""
-            - **Remote Environment**: Camera access is limited in codespaces/remote environments
-            - **Browser Permissions**: Camera permissions might be blocked
-            - **Hardware**: No camera available on this system
-            - **System Lock**: Camera might be in use by another application
-            
-            **Solutions:**
-            1. **Use Local Environment**: Run this app locally on your machine
-            2. **Upload Image**: Use the image upload feature below instead
-            3. **Check Browser**: Ensure camera permissions are enabled
-            """)
-            st.session_state.camera_active = False
-            
-            # Provide alternative: Image upload for gesture recognition
-            st.subheader("📸 Alternative: Upload Image for Gesture Recognition")
-            uploaded_file = st.file_uploader("Choose an image with hand gesture", type=['jpg', 'jpeg', 'png'])
-            
-            if uploaded_file is not None:
-                # Read the image
-                image = Image.open(uploaded_file)
-                image_np = np.array(image)
+            if len(image_np.shape) == 3:
+                # Convert RGB to BGR for OpenCV
+                image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
                 
-                if len(image_np.shape) == 3:
-                    # Convert RGB to BGR for OpenCV
-                    image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
-                    
-                    # Process the image
-                    processed_frame, gesture_label, confidence = process_frame(image_bgr, st.session_state.model)
-                    
-                    # Display results
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.image(image, caption="Original Image", use_column_width=True)
-                    
-                    with col2:
-                        processed_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
-                        st.image(processed_rgb, caption="Processed Image", use_column_width=True)
-                    
-                    # Show results
-                    if "No hand" not in gesture_label:
-                        st.success(f"🎯 **Detected Gesture**: {gesture_label}")
-                        st.metric("🎯 Confidence", f"{confidence:.1%}")
-                    else:
-                        st.info("👋 No hand gesture detected in the image")
-        else:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            cap.set(cv2.CAP_PROP_FPS, 15)
-            
-            # Performance tracking
-            fps_counter = 0
-            start_time = time.time()
-            gesture_history_list = []
-            
-            placeholder_info = st.info("📷 Camera is active. Show your hand gestures!")
-            
-            while st.session_state.camera_active:
-                ret, frame = cap.read()
-                if not ret:
-                    st.error("Failed to capture frame")
-                    break
+                # Process the image
+                processed_frame, gesture_label, confidence = process_frame(image_bgr, st.session_state.model)
                 
-                # Mirror the frame
-                frame = cv2.flip(frame, 1)
+                # Display results
+                col1, col2 = st.columns(2)
                 
-                # Process frame
-                processed_frame, gesture_label, confidence = process_frame(frame, st.session_state.model)
+                with col1:
+                    st.image(image, caption="Original Image", use_column_width=True)
                 
-                # Add text overlay
-                cv2.putText(processed_frame, gesture_label, (10, 30), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                cv2.putText(processed_frame, f"FPS: {fps_counter}", (10, processed_frame.shape[0] - 20),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                with col2:
+                    processed_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
+                    st.image(processed_rgb, caption="Processed Image with Hand Landmarks", use_column_width=True)
                 
-                # Convert BGR to RGB for Streamlit
-                frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
-                
-                # Update display
-                frame_placeholder.image(frame_rgb, channels="RGB", use_column_width=True)
-                
-                # Update metrics
-                with confidence_metric:
+                # Show results
+                if "No hand" not in gesture_label and "error" not in gesture_label.lower():
+                    st.success(f"🎯 **Detected Gesture**: {gesture_label}")
                     st.metric("🎯 Confidence", f"{confidence:.1%}")
-                
-                with fps_metric:
-                    current_time = time.time()
-                    if current_time - start_time >= 1.0:
-                        fps_counter = int(fps_counter / (current_time - start_time))
-                        st.metric("⚡ FPS", fps_counter)
-                        fps_counter = 0
-                        start_time = current_time
-                    else:
-                        fps_counter += 1
-                
-                # Update gesture history
-                if "No hand" not in gesture_label:
-                    gesture_history_list.append(gesture_label)
-                    if len(gesture_history_list) > 10:
-                        gesture_history_list.pop(0)
-                
-                with gesture_history:
-                    st.subheader("📋 Recent Gestures")
-                    for i, gesture in enumerate(reversed(gesture_history_list[-5:])):
-                        st.text(f"{5-i}. {gesture}")
-                
-                # Display current result
-                with result_placeholder:
-                    if "No hand" not in gesture_label:
-                        st.success(f"🎯 **Detected**: {gesture_label}")
-                    else:
-                        st.info("👋 Show your hand to start recognition")
-                
-                # Small delay to prevent overwhelming the display
-                time.sleep(0.033)  # ~30 FPS
-                
-                # Check if we should stop (re-run detection)
-                if not st.session_state.camera_active:
-                    break
-            
-            cap.release()
-            placeholder_info.success("📷 Camera stopped successfully")
-            
-    except Exception as e:
-        st.error(f"❌ Camera error: {e}")
-        st.session_state.camera_active = False
+                else:
+                    st.info("👋 No hand gesture detected in the image")
+                    
+        except Exception as e:
+            st.error(f"Error processing image: {e}")
 
 elif st.session_state.camera_active and not st.session_state.model_loaded:
     st.error("❌ No model loaded. Please train a model first using the sidebar.")
     st.session_state.camera_active = False
+
+# Always show image upload section for deployment
+if not st.session_state.camera_active:
+    st.header("📸 Image-Based Gesture Recognition")
+    st.info("💡 Upload an image with hand gestures to test the AI model!")
+    
+    uploaded_file = st.file_uploader("Choose an image with hand gesture", type=['jpg', 'jpeg', 'png'], key="main_uploader")
+    
+    if uploaded_file is not None and st.session_state.model_loaded:
+        try:
+            # Read the image
+            image = Image.open(uploaded_file)
+            image_np = np.array(image)
+            
+            if len(image_np.shape) == 3:
+                # Convert RGB to BGR for OpenCV
+                image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+                
+                # Process the image
+                processed_frame, gesture_label, confidence = process_frame(image_bgr, st.session_state.model)
+                
+                # Display results
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.image(image, caption="📷 Original Image", use_column_width=True)
+                
+                with col2:
+                    processed_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
+                    st.image(processed_rgb, caption="🎯 AI Analysis with Hand Landmarks", use_column_width=True)
+                
+                # Show results with better formatting
+                st.markdown("---")
+                if "No hand" not in gesture_label and "error" not in gesture_label.lower():
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.success(f"🎯 **Detected Gesture**: {gesture_label}")
+                    with col2:
+                        st.metric("📊 Confidence Score", f"{confidence:.1%}")
+                else:
+                    st.info("👋 No hand gesture detected in the image. Try with a clearer hand gesture image.")
+                    
+        except Exception as e:
+            st.error(f"Error processing image: {e}")
+    elif uploaded_file is not None and not st.session_state.model_loaded:
+        st.warning("⚠️ Please train a model first using the sidebar controls!")
 
 # Footer
 st.markdown("---")

@@ -1,10 +1,15 @@
+streamlit
 opencv-python
 mediapipe
 numpy
 pandas
 scikit-learn
 joblib
-gradio
 keyboard
 matplotlib
 seaborn
+pillow
+requests
+plotly
+threading
+queue

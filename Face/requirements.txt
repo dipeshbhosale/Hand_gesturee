@@ -1,0 +1,10 @@
+opencv-python
+mediapipe
+numpy
+pandas
+scikit-learn
+joblib
+gradio
+keyboard
+matplotlib
+seaborn

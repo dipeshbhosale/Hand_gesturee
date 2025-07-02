@@ -656,7 +656,6 @@ def run_complete_pipeline():
 
 if __name__ == "__main__":
     choice = input("Choose option:\n1. Run complete pipeline\n2. Collect data only\n3. Train model only\n4. Start recognition (requires existing files)\n5. Test camera only\n6. Use OpenCV interface (RECOMMENDED)\nEnter (1-6): ")
-    
     if choice == "1":
         if run_complete_pipeline():
             print("🚀 Starting optimized Gradio interface...")

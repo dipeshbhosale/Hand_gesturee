@@ -165,6 +165,38 @@ def extract_landmarks(hand_landmarks):
         landmarks.extend([lm.x, lm.y, lm.z])
     return np.array(landmarks).reshape(1, -1)
 
+def test_camera():
+    """Test camera access and return status"""
+    try:
+        # Try different camera indices
+        for camera_index in [0, 1, 2, -1]:
+            try:
+                cap = cv2.VideoCapture(camera_index)
+                if cap.isOpened():
+                    ret, frame = cap.read()
+                    if ret and frame is not None:
+                        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                        cap.release()
+                        return {
+                            'success': True, 
+                            'index': camera_index,
+                            'width': width,
+                            'height': height
+                        }
+                    cap.release()
+                else:
+                    if cap:
+                        cap.release()
+            except Exception as e:
+                if 'cap' in locals() and cap:
+                    cap.release()
+                continue
+        
+        return {'success': False, 'error': 'No working camera found'}
+    except Exception as e:
+        return {'success': False, 'error': str(e)}
+
 def process_frame(frame, model):
     """Process a single frame for gesture recognition"""
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -218,6 +250,16 @@ with st.sidebar:
                 st.session_state.model_loaded = False  # Force reload
             else:
                 st.error(f"❌ Training failed: {result}")
+    
+    if st.button("📹 Test Camera"):
+        with st.spinner("Testing camera access..."):
+            camera_test_result = test_camera()
+            if camera_test_result['success']:
+                st.success(f"✅ Camera working! Found at index {camera_test_result['index']}")
+                st.info(f"Resolution: {camera_test_result['width']}x{camera_test_result['height']}")
+            else:
+                st.error(f"❌ Camera test failed: {camera_test_result['error']}")
+                st.info("💡 Try running the app locally for better camera support")
     
     # Model status
     if not st.session_state.model_loaded:
@@ -296,20 +338,112 @@ if stop_camera:
 # Main camera loop
 if st.session_state.camera_active and st.session_state.model_loaded:
     try:
-        cap = cv2.VideoCapture(0)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_FPS, 15)
+        # Try different camera indices and methods
+        cap = None
+        camera_found = False
         
-        # Performance tracking
-        fps_counter = 0
-        start_time = time.time()
-        gesture_history_list = []
+        # Try multiple camera indices
+        for camera_index in [0, 1, 2, -1]:
+            try:
+                cap = cv2.VideoCapture(camera_index)
+                if cap.isOpened():
+                    # Test if we can actually read a frame
+                    ret, test_frame = cap.read()
+                    if ret and test_frame is not None:
+                        camera_found = True
+                        st.success(f"✅ Camera found at index {camera_index}")
+                        break
+                    else:
+                        cap.release()
+                else:
+                    if cap:
+                        cap.release()
+            except Exception as e:
+                if cap:
+                    cap.release()
+                continue
         
-        if not cap.isOpened():
-            st.error("❌ Cannot access camera. Please check camera permissions.")
+        # If no camera found, try different backends
+        if not camera_found:
+            st.warning("🔍 Trying alternative camera access methods...")
+            backends = [cv2.CAP_V4L2, cv2.CAP_GSTREAMER, cv2.CAP_FFMPEG]
+            
+            for backend in backends:
+                try:
+                    cap = cv2.VideoCapture(0, backend)
+                    if cap.isOpened():
+                        ret, test_frame = cap.read()
+                        if ret and test_frame is not None:
+                            camera_found = True
+                            st.success(f"✅ Camera found with backend {backend}")
+                            break
+                        else:
+                            cap.release()
+                    else:
+                        if cap:
+                            cap.release()
+                except Exception as e:
+                    if cap:
+                        cap.release()
+                    continue
+        
+        if not camera_found or cap is None or not cap.isOpened():
+            st.error("❌ Cannot access camera. This might be due to:")
+            st.markdown("""
+            - **Remote Environment**: Camera access is limited in codespaces/remote environments
+            - **Browser Permissions**: Camera permissions might be blocked
+            - **Hardware**: No camera available on this system
+            - **System Lock**: Camera might be in use by another application
+            
+            **Solutions:**
+            1. **Use Local Environment**: Run this app locally on your machine
+            2. **Upload Image**: Use the image upload feature below instead
+            3. **Check Browser**: Ensure camera permissions are enabled
+            """)
             st.session_state.camera_active = False
+            
+            # Provide alternative: Image upload for gesture recognition
+            st.subheader("📸 Alternative: Upload Image for Gesture Recognition")
+            uploaded_file = st.file_uploader("Choose an image with hand gesture", type=['jpg', 'jpeg', 'png'])
+            
+            if uploaded_file is not None:
+                # Read the image
+                image = Image.open(uploaded_file)
+                image_np = np.array(image)
+                
+                if len(image_np.shape) == 3:
+                    # Convert RGB to BGR for OpenCV
+                    image_bgr = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+                    
+                    # Process the image
+                    processed_frame, gesture_label, confidence = process_frame(image_bgr, st.session_state.model)
+                    
+                    # Display results
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.image(image, caption="Original Image", use_column_width=True)
+                    
+                    with col2:
+                        processed_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
+                        st.image(processed_rgb, caption="Processed Image", use_column_width=True)
+                    
+                    # Show results
+                    if "No hand" not in gesture_label:
+                        st.success(f"🎯 **Detected Gesture**: {gesture_label}")
+                        st.metric("🎯 Confidence", f"{confidence:.1%}")
+                    else:
+                        st.info("👋 No hand gesture detected in the image")
         else:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FPS, 15)
+            
+            # Performance tracking
+            fps_counter = 0
+            start_time = time.time()
+            gesture_history_list = []
+            
             placeholder_info = st.info("📷 Camera is active. Show your hand gestures!")
             
             while st.session_state.camera_active:
